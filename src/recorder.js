@@ -1,11 +1,14 @@
 import InlineWorker from 'inline-worker';
 
 export class Recorder {
-    config = {
+    defaultConfig = {
         bufferLen: 4096,
         numChannels: 2,
+        sampleRate: 44100,
         mimeType: 'audio/wav'
-    };
+    }
+
+    config = {};
 
     recording = false;
 
@@ -15,7 +18,8 @@ export class Recorder {
     };
 
     constructor(source, cfg) {
-        Object.assign(this.config, cfg);
+        this.config = Object.assign({}, this.defaultConfig, cfg);
+
         this.context = source.context;
         this.node = (this.context.createScriptProcessor ||
         this.context.createJavaScriptNode).call(this.context,
@@ -53,7 +57,7 @@ export class Recorder {
                         record(e.data.buffer);
                         break;
                     case 'exportWAV':
-                        exportWAV(e.data.type);
+                        exportWAV(e.data.type, e.data.buffer, e.data.sampleRate);
                         break;
                     case 'getBuffer':
                         getBuffer();
@@ -77,28 +81,34 @@ export class Recorder {
                 recLength += inputBuffer[0].length;
             }
 
-            function exportWAV(type) {
+
+            function _internalGetBuffers() {
                 let buffers = [];
                 for (let channel = 0; channel < numChannels; channel++) {
                     buffers.push(mergeBuffers(recBuffers[channel], recLength));
                 }
+                return buffers;
+            }
+
+            function exportWAV(type, buffers, sampleRate) {
+                buffers = buffers || _internalGetBuffers();
                 let interleaved;
-                if (numChannels === 2) {
+                channels = buffers.length;
+
+                if (channels === 2) {
                     interleaved = interleave(buffers[0], buffers[1]);
                 } else {
                     interleaved = buffers[0];
                 }
-                let dataview = encodeWAV(interleaved);
+
+                let dataview = encodeWAV(interleaved, sampleRate);
                 let audioBlob = new Blob([dataview], {type: type});
 
                 this.postMessage({command: 'exportWAV', data: audioBlob});
             }
 
             function getBuffer() {
-                let buffers = [];
-                for (let channel = 0; channel < numChannels; channel++) {
-                    buffers.push(mergeBuffers(recBuffers[channel], recLength));
-                }
+                let buffers = _internalGetBuffers();
                 this.postMessage({command: 'getBuffer', data: buffers});
             }
 
@@ -152,7 +162,7 @@ export class Recorder {
                 }
             }
 
-            function encodeWAV(samples) {
+            function encodeWAV(samples, sampleRate) {
                 let buffer = new ArrayBuffer(44 + samples.length * 2);
                 let view = new DataView(buffer);
 
@@ -198,13 +208,13 @@ export class Recorder {
         });
 
         this.worker.onmessage = (e) => {
-            let cb = this.callbacks[e.data.command].pop();
+            let cb = this.callbacks[e.data.command] && this.callbacks[e.data.command].pop();
             if (typeof cb == 'function') {
                 cb(e.data.data);
             }
         };
-    }
 
+    }
 
     record() {
         this.recording = true;
@@ -222,22 +232,72 @@ export class Recorder {
         cb = cb || this.config.callback;
         if (!cb) throw new Error('Callback not set');
 
-        this.callbacks.getBuffer.push(cb);
-
+        // get record buffer from worker
+        this.callbacks.getBuffer.push(function(buffer) {
+            // resample to output sample rate
+            self.resample(buffer, self.context.sampleRate, self.config.sampleRate, cb);
+        });
         this.worker.postMessage({command: 'getBuffer'});
     }
 
     exportWAV(cb, mimeType) {
-        mimeType = mimeType || this.config.mimeType;
-        cb = cb || this.config.callback;
-        if (!cb) throw new Error('Callback not set');
+        var self = this;
+        // get record buffer from worker
+        this.callbacks.getBuffer.push(function(buffer) {
+            // resample to output sample rate
+            self.resample(buffer, self.context.sampleRate, self.config.sampleRate, function(buffer) {
+                // hand over data to worker for wav export
+                self.callbacks.exportWAV.push(cb);
+                self.worker.postMessage({
+                    command: 'exportWAV',
+                    type: mimeType || self.config.mimeType,
+                    buffer: buffer,
+                    sampleRate: self.config.sampleRate
+                });
+            })
+        })
+        this.worker.postMessage({command: 'getBuffer'});
+    }
 
-        this.callbacks.exportWAV.push(cb);
+    /**
+     * Resample using OfflineAudioContext
+     */
+    resample(inBuffer, inSampleRate, outSampleRate, callback) {
 
-        this.worker.postMessage({
-            command: 'exportWAV',
-            type: mimeType
-        });
+        // if no resampling is needed, just return the input buffer
+        if (inSampleRate == outSampleRate) {
+            callback(inBuffer);
+            return;
+        }
+
+        var oac = new OfflineAudioContext(inBuffer.length, inBuffer[0].length, outSampleRate);
+
+        // create audio buffer
+        var sourceBuffer = oac.createBuffer(inBuffer.length, inBuffer[0].length, inSampleRate);
+
+        // copy audio data to source buffer
+        for (var channel = 0; channel < inBuffer.length; channel++) {
+            sourceBuffer.copyToChannel(inBuffer[channel], channel, 0);
+        }
+
+        // create source from buffer and connect to destination
+        var source = oac.createBufferSource();
+        source.buffer = sourceBuffer;
+        source.connect(oac.destination);
+        source.start(0);
+        oac.oncomplete = function(audiobuffer) {
+            // when rendered, copy channel data to buffer
+            var buffer = [];
+            var len = Math.round(outSampleRate * inBuffer[0].length / inSampleRate);
+            for (var channel = 0; channel < audiobuffer.renderedBuffer.numberOfChannels; channel++) {
+            buffer[channel] = new Float32Array;
+                buffer[channel] = audiobuffer.renderedBuffer.getChannelData(channel).slice(0,len);
+            }
+
+            callback(buffer);
+        }
+
+        oac.startRendering();
     }
 
     static
