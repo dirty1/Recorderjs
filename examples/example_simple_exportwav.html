@@ -17,7 +17,8 @@
   <p>Also before you enable microphone input either plug in headphones or turn the volume down if you want to avoid ear splitting feedback!</p>
 
   <button onclick="startRecording(this);">record</button>
-  <button onclick="stopRecording(this);" disabled>stop</button>
+  <button onclick="stopRecording(this);" disabled>pause</button>
+  <button onclick="clearRecording(this);">clear</button>
   
   <h2>Recordings</h2>
   <ul id="recordingslist"></ul>
@@ -32,20 +33,40 @@
 
   var audio_context;
   var recorder;
+  var tracks;
+  var prevBuffer;
 
-  function startUserMedia(stream) {
+  function startUserMedia(stream, callback) {
     var input = audio_context.createMediaStreamSource(stream);
     __log('Media stream created.');
+
+    // save created tracks so we can stop them when no longer needed
+    tracks = stream.getTracks();
 
     // Uncomment if you want the audio to feedback directly
     //input.connect(audio_context.destination);
     //__log('Input connected to audio context destination.');
     
-    recorder = new Recorder(input);
+    recorder = new Recorder(input, {sampleRate: 11025, numChannels: 1});
     __log('Recorder initialised.');
+    if (callback) {
+      callback();
+    }
+  }
+
+  function clearRecording(button) {
+    prevBuffer = undefined;
+    __log('clear');
   }
 
   function startRecording(button) {
+    if (!tracks) {
+      init(startRecording.bind(this, button));
+      return;
+    }
+    // if prevBuffer exists, continue recording to the same buffer
+    prevBuffer && recorder.setInputBuffer(prevBuffer);
+
     recorder && recorder.record();
     button.disabled = true;
     button.nextElementSibling.disabled = false;
@@ -58,10 +79,19 @@
     button.previousElementSibling.disabled = false;
     __log('Stopped recording.');
     
+    // keep recording buffer
+    recorder && recorder.getInputBuffer(function(buffer) {
+      prevBuffer = buffer;
+    });
+
     // create WAV download link using audio data blob
     createDownloadLink();
     
-    recorder.clear();
+    // stop the tracks to stop using the microphone
+    tracks && tracks.forEach( function(track, index) {
+      track.stop();
+    });
+    tracks = undefined;
   }
 
   function createDownloadLink() {
@@ -82,24 +112,55 @@
     });
   }
 
-  window.onload = function init() {
-    try {
-      // webkit shim
-      window.AudioContext = window.AudioContext || window.webkitAudioContext;
-      navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia;
-      window.URL = window.URL || window.webkitURL;
-      
-      audio_context = new AudioContext;
-      __log('Audio context set up.');
-      __log('navigator.getUserMedia ' + (navigator.getUserMedia ? 'available.' : 'not present!'));
-    } catch (e) {
-      alert('No web audio support in this browser!');
-    }
+
+
+  function init(callback) {
+    // webkit shim
+    window.AudioContext = window.AudioContext || window.webkitAudioContext;
+    window.URL = window.URL || window.webkitURL;
     
-    navigator.getUserMedia({audio: true}, startUserMedia, function(e) {
-      __log('No live audio input: ' + e);
+    audio_context = new AudioContext;
+    __log('Audio context set up.');
+
+    navigator.mediaDevices.getUserMedia({ audio: {sampleRate: 48000} })
+    .then(function(stream) {
+      startUserMedia(stream, callback);
+    })
+    .catch(function(err) {
+      console.log(err.name + ": " + err.message);
     });
+    
   };
+
+
+
+
+  // Older browsers might not implement mediaDevices at all, so we set an empty object first
+  if (navigator.mediaDevices === undefined) {
+    navigator.mediaDevices = {};
+  }
+
+  // Some browsers partially implement mediaDevices. We can't just assign an object
+  // with getUserMedia as it would overwrite existing properties.
+  // Here, we will just add the getUserMedia property if it's missing.
+  if (navigator.mediaDevices.getUserMedia === undefined) {
+    navigator.mediaDevices.getUserMedia = function(constraints) {
+
+      // First get ahold of the legacy getUserMedia, if present
+      var getUserMedia = navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+
+      // Some browsers just don't implement it - return a rejected promise with an error
+      // to keep a consistent interface
+      if (!getUserMedia) {
+        return Promise.reject(new Error('getUserMedia is not implemented in this browser'));
+      }
+
+      // Otherwise, wrap the call to the old navigator.getUserMedia with a Promise
+      return new Promise(function(resolve, reject) {
+        getUserMedia.call(navigator, constraints, resolve, reject);
+      });
+    }
+  }
   </script>
 
   <script src="../dist/recorder.js"></script>
