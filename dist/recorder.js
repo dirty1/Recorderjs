@@ -96,6 +96,9 @@ var Recorder = exports.Recorder = function () {
                     case 'getBuffer':
                         getBuffer();
                         break;
+                    case 'setBuffer':
+                        setBuffer(e.data.buffer);
+                        break;
                     case 'clear':
                         clear();
                         break;
@@ -143,6 +146,14 @@ var Recorder = exports.Recorder = function () {
             function getBuffer() {
                 var buffers = _internalGetBuffers();
                 this.postMessage({ command: 'getBuffer', data: buffers });
+            }
+
+            function setBuffer(buffers) {
+                clear();
+                for (var channel = 0; channel < buffers.length; channel++) {
+                    recBuffers[channel].push(buffers[channel]);
+                }
+                recLength += buffers[0].length;
             }
 
             function clear() {
@@ -275,6 +286,22 @@ var Recorder = exports.Recorder = function () {
                 self.resample(buffer, self.context.sampleRate, self.config.sampleRate, cb);
             });
             this.worker.postMessage({ command: 'getBuffer' });
+        }
+    }, {
+        key: 'getInputBuffer',
+        value: function getInputBuffer(cb) {
+            cb = cb || this.config.callback;
+            if (!cb) throw new Error('Callback not set');
+            this.callbacks.getBuffer.push(cb);
+            this.worker.postMessage({ command: 'getBuffer' });
+        }
+    }, {
+        key: 'setInputBuffer',
+        value: function setInputBuffer(buffer) {
+            this.worker.postMessage({
+                command: 'setBuffer',
+                buffer: buffer
+            });
         }
     }, {
         key: 'exportWAV',
