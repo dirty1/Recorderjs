@@ -91,7 +91,7 @@ var Recorder = exports.Recorder = function () {
                         record(e.data.buffer);
                         break;
                     case 'exportWAV':
-                        exportWAV(e.data.type, e.data.buffer, e.data.sampleRate);
+                        exportWAV(e.data.type, e.data.sampleRate, e.data.buffer);
                         break;
                     case 'getBuffer':
                         getBuffer();
@@ -126,8 +126,9 @@ var Recorder = exports.Recorder = function () {
                 return buffers;
             }
 
-            function exportWAV(type, buffers, sampleRate) {
+            function exportWAV(type, exportSampleRate, buffers) {
                 buffers = buffers || _internalGetBuffers();
+                exportSampleRate = exportSampleRate || sampleRate;
                 var interleaved = void 0;
                 channels = buffers.length;
 
@@ -137,7 +138,7 @@ var Recorder = exports.Recorder = function () {
                     interleaved = buffers[0];
                 }
 
-                var dataview = encodeWAV(interleaved, sampleRate);
+                var dataview = encodeWAV(interleaved, exportSampleRate);
                 var audioBlob = new Blob([dataview], { type: type });
 
                 this.postMessage({ command: 'exportWAV', data: audioBlob });
@@ -282,9 +283,9 @@ var Recorder = exports.Recorder = function () {
 
             // get record buffer from worker
             this.callbacks.getBuffer.push(function (buffer) {
-                // resample to output sample rate
-                self.resample(buffer, self.context.sampleRate, self.config.sampleRate, cb);
-            });
+                // resample (if needed) to output sample rate
+                this.resample(buffer, this.context.sampleRate, this.config.sampleRate, cb);
+            }.bind(this));
             this.worker.postMessage({ command: 'getBuffer' });
         }
     }, {
@@ -306,21 +307,30 @@ var Recorder = exports.Recorder = function () {
     }, {
         key: 'exportWAV',
         value: function exportWAV(cb, mimeType) {
-            var self = this;
+            if (this.context.sampleRate == this.config.sampleRate) {
+                // if the sample rates are the same, there is no need to get the buffer from the worker and resample it.
+                // just let the worker export the buffer that is already there.
+                this.callbacks.exportWAV.push(cb);
+                this.worker.postMessage({
+                    command: 'exportWAV',
+                    type: mimeType || this.config.mimeType
+                });
+                return;
+            }
             // get record buffer from worker
             this.callbacks.getBuffer.push(function (buffer) {
                 // resample to output sample rate
-                self.resample(buffer, self.context.sampleRate, self.config.sampleRate, function (buffer) {
+                this.resample(buffer, this.context.sampleRate, this.config.sampleRate, function (buffer) {
                     // hand over data to worker for wav export
-                    self.callbacks.exportWAV.push(cb);
-                    self.worker.postMessage({
+                    this.callbacks.exportWAV.push(cb);
+                    this.worker.postMessage({
                         command: 'exportWAV',
-                        type: mimeType || self.config.mimeType,
+                        type: mimeType || this.config.mimeType,
                         buffer: buffer,
-                        sampleRate: self.config.sampleRate
+                        sampleRate: this.config.sampleRate
                     });
-                });
-            });
+                }.bind(this));
+            }.bind(this));
             this.worker.postMessage({ command: 'getBuffer' });
         }
 
@@ -357,9 +367,9 @@ var Recorder = exports.Recorder = function () {
                 // when rendered, copy channel data to buffer
                 var buffer = [];
                 var len = Math.round(outSampleRate * inBuffer[0].length / inSampleRate);
-                for (var channel = 0; channel < audiobuffer.renderedBuffer.numberOfChannels; channel++) {
-                    buffer[channel] = new Float32Array();
-                    buffer[channel] = audiobuffer.renderedBuffer.getChannelData(channel).slice(0, len);
+                for (var _channel = 0; _channel < audiobuffer.renderedBuffer.numberOfChannels; _channel++) {
+                    buffer[_channel] = new Float32Array();
+                    buffer[_channel] = audiobuffer.renderedBuffer.getChannelData(_channel).slice(0, len);
                 }
 
                 callback(buffer);
