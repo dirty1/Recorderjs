@@ -13,6 +13,7 @@ export class Recorder {
     recording = false;
 
     callbacks = {
+        getStatus: [],
         getBuffer: [],
         exportWAV: []
     };
@@ -36,6 +37,15 @@ export class Recorder {
                 command: 'record',
                 buffer: buffer
             });
+            if (cfg.onAudioProcess) {
+              this.callbacks.getStatus.push(data => {
+                let status = {
+                  duration: this.context.sampleRate ? (data.recLength || 0) / this.context.sampleRate : 0
+                };
+                cfg.onAudioProcess(status);
+              });
+              this.worker.postMessage({command: 'getStatus'});
+            }
         };
 
         source.connect(this.node);
@@ -61,6 +71,9 @@ export class Recorder {
                         break;
                     case 'getBuffer':
                         getBuffer();
+                        break;
+                    case 'getStatus':
+                        getStatus();
                         break;
                     case 'setBuffer':
                         setBuffer(e.data.buffer);
@@ -109,6 +122,10 @@ export class Recorder {
                 let audioBlob = new Blob([dataview], {type: type});
 
                 this.postMessage({command: 'exportWAV', data: audioBlob});
+            }
+
+            function getStatus() {
+                this.postMessage({command: 'getStatus', data: {recLength: recLength}});
             }
 
             function getBuffer() {

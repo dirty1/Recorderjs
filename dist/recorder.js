@@ -50,6 +50,7 @@ var Recorder = exports.Recorder = function () {
         this.config = {};
         this.recording = false;
         this.callbacks = {
+            getStatus: [],
             getBuffer: [],
             exportWAV: []
         };
@@ -70,6 +71,15 @@ var Recorder = exports.Recorder = function () {
                 command: 'record',
                 buffer: buffer
             });
+            if (cfg.onAudioProcess) {
+                _this.callbacks.getStatus.push(function (data) {
+                    var status = {
+                        duration: _this.context.sampleRate ? (data.recLength || 0) / _this.context.sampleRate : 0
+                    };
+                    cfg.onAudioProcess(status);
+                });
+                _this.worker.postMessage({ command: 'getStatus' });
+            }
         };
 
         source.connect(this.node);
@@ -95,6 +105,9 @@ var Recorder = exports.Recorder = function () {
                         break;
                     case 'getBuffer':
                         getBuffer();
+                        break;
+                    case 'getStatus':
+                        getStatus();
                         break;
                     case 'setBuffer':
                         setBuffer(e.data.buffer);
@@ -142,6 +155,10 @@ var Recorder = exports.Recorder = function () {
                 var audioBlob = new Blob([dataview], { type: type });
 
                 this.postMessage({ command: 'exportWAV', data: audioBlob });
+            }
+
+            function getStatus() {
+                this.postMessage({ command: 'getStatus', data: { recLength: recLength } });
             }
 
             function getBuffer() {
