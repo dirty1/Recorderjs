@@ -337,14 +337,14 @@ var Recorder = exports.Recorder = function () {
             // get record buffer from worker
             this.callbacks.getBuffer.push(function (buffer) {
                 // resample to output sample rate
-                this.resample(buffer, this.context.sampleRate, this.config.sampleRate, function (buffer) {
+                this.resample(buffer, this.context.sampleRate, this.config.sampleRate, function (buffer, sampleRate) {
                     // hand over data to worker for wav export
                     this.callbacks.exportWAV.push(cb);
                     this.worker.postMessage({
                         command: 'exportWAV',
                         type: mimeType || this.config.mimeType,
                         buffer: buffer,
-                        sampleRate: this.config.sampleRate
+                        sampleRate: sampleRate
                     });
                 }.bind(this));
             }.bind(this));
@@ -361,12 +361,18 @@ var Recorder = exports.Recorder = function () {
 
             // if no resampling is needed, just return the input buffer
             if (inSampleRate == outSampleRate) {
-                callback(inBuffer);
+                callback(inBuffer, inSampleRate);
                 return;
             }
 
-            var OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-            var oac = new OAC(inBuffer.length, inBuffer[0].length, outSampleRate);
+            // Safari (webkitOfflineAudioContext) doesn't seem to handle sample rates lower that 44100,
+            // so there's no need to even try to resample the data
+            if (!window.OfflineAudioContext) {
+                callback(inBuffer, inSampleRate);
+                return;
+            }
+
+            var oac = new OfflineAudioContext(inBuffer.length, inBuffer[0].length, outSampleRate);
 
             // create audio buffer
             var sourceBuffer = oac.createBuffer(inBuffer.length, inBuffer[0].length, inSampleRate);
@@ -390,7 +396,7 @@ var Recorder = exports.Recorder = function () {
                     buffer[_channel] = audiobuffer.renderedBuffer.getChannelData(_channel).slice(0, len);
                 }
 
-                callback(buffer);
+                callback(buffer, outSampleRate);
             };
 
             oac.startRendering();

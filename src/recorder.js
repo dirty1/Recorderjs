@@ -297,14 +297,14 @@ export class Recorder {
         // get record buffer from worker
         this.callbacks.getBuffer.push(function(buffer) {
             // resample to output sample rate
-            this.resample(buffer, this.context.sampleRate, this.config.sampleRate, function(buffer) {
+            this.resample(buffer, this.context.sampleRate, this.config.sampleRate, function(buffer, sampleRate) {
                 // hand over data to worker for wav export
                 this.callbacks.exportWAV.push(cb);
                 this.worker.postMessage({
                     command: 'exportWAV',
                     type: mimeType || this.config.mimeType,
                     buffer: buffer,
-                    sampleRate: this.config.sampleRate
+                    sampleRate: sampleRate
                 });
             }.bind(this));
         }.bind(this));
@@ -318,12 +318,18 @@ export class Recorder {
 
         // if no resampling is needed, just return the input buffer
         if (inSampleRate == outSampleRate) {
-            callback(inBuffer);
+            callback(inBuffer, inSampleRate);
             return;
         }
 
-        let OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-        let oac = new OAC(inBuffer.length, inBuffer[0].length, outSampleRate);
+        // Safari (webkitOfflineAudioContext) doesn't seem to handle sample rates lower that 44100,
+        // so there's no need to even try to resample the data
+        if (!window.OfflineAudioContext) {
+            callback(inBuffer, inSampleRate);
+            return;
+        }
+
+        let oac = new OfflineAudioContext(inBuffer.length, inBuffer[0].length, outSampleRate);
 
         // create audio buffer
         let sourceBuffer = oac.createBuffer(inBuffer.length, inBuffer[0].length, inSampleRate);
@@ -347,7 +353,7 @@ export class Recorder {
                 buffer[channel] = audiobuffer.renderedBuffer.getChannelData(channel).slice(0,len);
             }
 
-            callback(buffer);
+            callback(buffer, outSampleRate);
         }
 
         oac.startRendering();
