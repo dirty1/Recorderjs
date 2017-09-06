@@ -365,7 +365,7 @@ var Recorder = exports.Recorder = function () {
                 return;
             }
 
-            var OAC = OfflineAudioContext || webkitOfflineAudioContext;
+            var OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
             var oac = new OAC(inBuffer.length, inBuffer[0].length, outSampleRate);
 
             // create audio buffer
