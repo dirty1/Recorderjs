@@ -322,7 +322,8 @@ export class Recorder {
             return;
         }
 
-        let oac = new OfflineAudioContext(inBuffer.length, inBuffer[0].length, outSampleRate);
+        let OAC = OfflineAudioContext || webkitOfflineAudioContext;
+        let oac = new OAC(inBuffer.length, inBuffer[0].length, outSampleRate);
 
         // create audio buffer
         let sourceBuffer = oac.createBuffer(inBuffer.length, inBuffer[0].length, inSampleRate);
