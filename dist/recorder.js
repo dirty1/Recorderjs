@@ -60,6 +60,9 @@ var Recorder = exports.Recorder = function () {
         this.context = source.context;
         this.node = (this.context.createScriptProcessor || this.context.createJavaScriptNode).call(this.context, this.config.bufferLen, this.config.numChannels, this.config.numChannels);
 
+        source.connect(this.node);
+        this.node.connect(this.context.destination);
+
         this.node.onaudioprocess = function (e) {
             if (!_this.recording) return;
 
@@ -474,6 +477,7 @@ var InlineWorker = (function () {
 })();
 
 module.exports = InlineWorker;
+
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
 },{}]},{},[1])(1)
 });
